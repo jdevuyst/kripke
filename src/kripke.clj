@@ -3,25 +3,7 @@
             [clojure.math.combinatorics :refer (cartesian-product)]
             [fletching.macros :refer (<fn ?>)]))
 
-;
-; Utilities
-;
-
-(defn- iter! [coll]
-  (let [!coll (atom coll)]
-    #(?> (first @!coll)
-         do (swap! !coll rest) ?)))
-
-(defmacro eavesdrop [spy-name expr]
-  `(let [!acc# (-> [] transient atom)
-         ~spy-name (fn [x#]
-                     (swap! !acc# conj! x#)
-                     x#)
-         r# ~expr]
-     [r# (persistent! @!acc#)]))
-
-(defmacro gather [& args]
-  `(second (eavesdrop ~@args)))
+;; Utilities
 
 (defn- walk-type [x]
   (cond (list? x) [:list (count x)]
@@ -30,6 +12,21 @@
         (instance? clojure.lang.IRecord x) [:record (count x)]
         (coll? x) [:coll (count x)]
         :else x))
+
+(defmacro ^:private eavesdrop [spy-name expr]
+  `(let [!acc# (-> [] transient atom)
+         ~spy-name (fn [x#]
+                     (swap! !acc# conj! x#)
+                     x#)]
+     [~expr (persistent! @!acc#)]))
+
+(defmacro ^:private gather [spy-name expr]
+  `(second (eavesdrop ~spy-name ~expr)))
+
+(defn- iter! [coll]
+  (let [!coll (atom coll)]
+    #(?> (first @!coll)
+         do (swap! !coll rest) ?)))
 
 (defn- diff [f x y]
   {:pre [(fn? f)]}
@@ -41,54 +38,43 @@
             identity
             y))))
 
-;
-; Core
-;
+;; Core
 
 (def ^:dynamic *map* map)
 
 (def ^:dynamic *fold* reduce)
 
-(defn disjunction [coll]
-  {:pre [(coll? coll)
-         (seq coll)]}
-  [::disjunction coll])
-
-(defn disjunction? [x]
+(defn first= [x tag]
   (and (coll? x)
-       (= ::disjunction (first x))
-       (-> x second coll?)))
+       (= tag (first x))))
 
-(defn alt [& xs]
-  (disjunction xs))
-
-(defmacro alt* [& exprs]
-  `(disjunction (map #(%) [~@(for [expr exprs]
-                               `(fn [] ~expr))])))
-
-(defn project [x f]
-  {:pre [(fn? f)]}
-  (postwalk #(if (disjunction? %)
-               (-> % second f)
+(defn project [x tag f]
+  {:pre [(-> tag coll? not)
+         (fn? f)]}
+  (postwalk #(if (first= % tag)
+               (apply f (rest %))
                %)
             x))
 
-(defn expand
-  ([x] (let [[x disjunctions] (eavesdrop spy
-                                         (project x (comp disjunction spy vec)))]
-         (expand x (->> disjunctions
-                        (map (comp range count))
-                        (apply cartesian-product)
-                        (map (comp #(<fn (%))
-                                   iter!
-                                   (partial map #(<fn nth %))))))))
-  ([x fs] (*map* (partial project x) fs)))
+(defn expand [x tag]
+  {:pre [(-> tag coll? not)]}
+  (let [[x doms] (eavesdrop yield
+                            (project x tag (comp (partial vector tag)
+                                                 yield
+                                                 vec
+                                                 distinct)))]
+    (->> doms
+         (map (comp range count))
+         (apply cartesian-product)
+         (map (comp (partial project x tag)
+                    #(<fn (%))
+                    iter!
+                    (partial map #(<fn nth %)))))))
 
-(defn summarize [coll]
-  {:pre [(coll? coll)
-         (seq coll)]}
-  (let [table-id (gensym "summarize__")
-        prototype (*fold* (partial diff (constantly ::wildcard))
+(defn summarize [coll tag]
+  {:pre [(coll? coll) (seq coll)
+         (-> tag coll? not)]}
+  (let [prototype (*fold* (partial diff (constantly ::wildcard))
                           coll)
         next-dom! (->> coll
                        (*map* (fn [x]
@@ -100,13 +86,10 @@
                        (apply map vector)
                        iter!)]
     [(prewalk #(if (= % ::wildcard)
-                 (-> (next-dom!)
-                     (with-meta {::table-id table-id})
-                     disjunction)
+                 [tag (next-dom!)]
                  %)
               prototype)
-     (map #(fn [dom]
-             (if (= table-id (-> dom meta ::table-id))
-               (nth dom %)
-               dom))
-          (-> coll count range))]))
+     (fn [x]
+       (*map* (comp (partial project x tag)
+                    #(<fn nth %))
+              (-> coll count range)))]))
