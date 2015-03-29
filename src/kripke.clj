@@ -1,6 +1,5 @@
 (ns kripke
-  (:require [clojure.walk :refer (walk postwalk prewalk)]
-            [clojure.math.combinatorics :refer (cartesian-product)]
+  (:require [clojure.walk :as w]
             [fletching.macros :refer (<fn ?>)]))
 
 ;; Utilities
@@ -13,15 +12,13 @@
         (coll? x) [:coll (count x)]
         :else x))
 
-(defmacro ^:private eavesdrop [spy-name expr]
-  `(let [!acc# (-> [] transient atom)
-         ~spy-name (fn [x#]
-                     (swap! !acc# conj! x#)
-                     x#)]
-     [~expr (persistent! @!acc#)]))
-
-(defmacro ^:private gather [spy-name expr]
-  `(second (eavesdrop ~spy-name ~expr)))
+(defmacro ^:private gather [conj-name init-val expr]
+  `(let [!acc# (-> ~init-val transient atom)
+         ~conj-name (fn [x#]
+                      (swap! !acc# conj! x#)
+                      x#)]
+     ~expr
+     (persistent! @!acc#)))
 
 (defn- iter! [coll]
   (let [!coll (atom coll)]
@@ -32,11 +29,11 @@
   {:pre [(fn? f)]}
   (if (not= (walk-type x) (walk-type y))
     (f x y)
-    (let [f! (iter! (gather yield
-                            (walk yield identity x)))]
-      (walk #(diff f (f!) %)
-            identity
-            y))))
+    (let [f! (iter! (gather yield []
+                            (w/walk yield identity x)))]
+      (w/walk #(diff f (f!) %)
+              identity
+              y))))
 
 ;; Core
 
@@ -44,52 +41,50 @@
 
 (def ^:dynamic *fold* reduce)
 
-(defn first= [x tag]
-  (and (coll? x)
-       (= tag (first x))))
+(def ^:dynamic *op*)
 
-(defn project [x tag f]
-  {:pre [(-> tag coll? not)
-         (fn? f)]}
-  (postwalk #(if (first= % tag)
-               (apply f (rest %))
-               %)
-            x))
+(defmacro abstract [expr]
+  `(let [!smaps# (ref [{}])]
+     (binding [*op* (fn [f#]
+                      (dosync
+                        (let [symb# (gensym 'abstract__)]
+                          (->> @!smaps#
+                               (mapcat (<fn f# symb#))
+                               (ref-set !smaps#))
+                          symb#)))]
+       [~expr @!smaps#])))
 
-(defn expand [x tag]
-  {:pre [(-> tag coll? not)]}
-  (let [[x doms] (eavesdrop yield
-                            (project x tag (comp (partial vector tag)
-                                                 yield
-                                                 vec
-                                                 distinct)))]
-    (->> doms
-         (map (comp range count))
-         (apply cartesian-product)
-         (map (comp (partial project x tag)
-                    #(<fn (%))
-                    iter!
-                    (partial map #(<fn nth %)))))))
+(defn alt [& disjuncts]
+  {:pre [(fn? *op*)
+         (-> disjuncts count pos?)]}
+  (*op* (fn [smap symb]
+          (map #(assoc smap symb (w/prewalk-replace smap %))
+               disjuncts))))
 
-(defn summarize [coll tag]
-  {:pre [(coll? coll) (seq coll)
-         (-> tag coll? not)]}
-  (let [prototype (*fold* (partial diff (constantly ::wildcard))
-                          coll)
-        next-dom! (->> coll
-                       (*map* (fn [x]
-                                (gather yield
-                                        (diff #(when (= %1 ::wildcard)
-                                                 (yield %2))
-                                              prototype
-                                              x))))
-                       (apply map vector)
-                       iter!)]
-    [(prewalk #(if (= % ::wildcard)
-                 [tag (next-dom!)]
-                 %)
-              prototype)
-     (fn [x]
-       (*map* (comp (partial project x tag)
-                    #(<fn nth %))
-              (-> coll count range)))]))
+(defn prune [frame smaps]
+  (let [all-keys (set (mapcat keys smaps))
+        diff (->> (gather yield []
+                          (w/postwalk yield frame))
+                  (reduce disj! (transient all-keys))
+                  persistent!)]
+    [frame (->> smaps
+                (*map* #(persistent! (reduce dissoc! (transient %) diff)))
+                set)]))
+
+(defn model [frame smaps]
+  (*map* (<fn w/prewalk-replace frame) smaps))
+
+(defn explore [coll]
+  {:pre [(coll? coll) (seq coll)]}
+  (abstract (*fold* (partial diff alt)
+                    coll)))
+
+(defn summarize [coll]
+  {:pre [(coll? coll) (seq coll)]}
+  (let [prototype (*fold* (partial diff (fn [_ _] (gensym 'summarize__)))
+                          coll)]
+    [prototype
+     (*map* (fn [x]
+              (gather yield {}
+                      (diff #(yield [%1 %2]) prototype x)))
+            coll)]))
