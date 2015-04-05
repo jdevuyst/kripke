@@ -1,4 +1,5 @@
 (ns kripke
+  (:refer-clojure :exclude [name])
   (:require [clojure.walk :as w]
             [fletching.macros :refer (<fn ?>)]))
 
@@ -39,40 +40,59 @@
 
 (def ^:dynamic *map* map)
 
+(def ^:dynamic *mapcat* mapcat)
+
 (def ^:dynamic *fold* reduce)
-
-(def ^:dynamic *op*)
-
-(defmacro abstract [expr]
-  `(let [!smaps# (ref [{}])]
-     (binding [*op* (fn [f#]
-                      (dosync
-                        (let [symb# (gensym 'abstract__)]
-                          (->> @!smaps#
-                               (mapcat (<fn f# symb#))
-                               (ref-set !smaps#))
-                          symb#)))]
-       [~expr @!smaps#])))
-
-(defn alt [& disjuncts]
-  {:pre [(fn? *op*)
-         (-> disjuncts count pos?)]}
-  (*op* (fn [smap symb]
-          (map #(assoc smap symb (w/prewalk-replace smap %))
-               disjuncts))))
-
-(defn prune [frame smaps]
-  (let [all-keys (set (mapcat keys smaps))
-        diff (->> (gather yield []
-                          (w/postwalk yield frame))
-                  (reduce disj! (transient all-keys))
-                  persistent!)]
-    [frame (->> smaps
-                (*map* #(persistent! (reduce dissoc! (transient %) diff)))
-                set)]))
 
 (defn model [frame smaps]
   (*map* (<fn w/prewalk-replace frame) smaps))
+
+(defn choice? [x]
+  (-> x meta ::choice))
+
+(defn abstract
+  ([form] (abstract form [{}] vector))
+  ([form smaps cont]
+   (if (choice? form)
+     (let [symb (gensym 'abstract__)]
+       (cont symb
+             (*mapcat* (<fn form symb) smaps)))
+     (let [!smaps (atom smaps)]
+       (cont (w/walk (<fn abstract @!smaps (fn [form smaps]
+                                             (reset! !smaps smaps)
+                                             form))
+                     identity
+                     form)
+             @!smaps)))))
+
+(defn abstract-more [smap symb]
+  (let [[form smaps] (abstract (smap symb) [smap] vector)]
+    (map #(if-let [[_ v] (find % form)]
+            (assoc (dissoc % form) symb v)
+            %)
+         smaps)))
+
+(defmacro choicefn [[smap-name symb-name] & body]
+  `(do ^::choice (fn [~smap-name ~symb-name]
+                   (mapcat (<fn abstract-more ~symb-name)
+                           (do ~@body)))))
+
+(defn alt [& disjuncts]
+  (choicefn [smap symb]
+            (map (partial assoc smap symb)
+                 disjuncts)))
+
+(defn table [id & xs]
+  {:pre [(keyword? id)]}
+  (choicefn [smap symb]
+            (if-let [i (smap id)]
+              [(assoc smap symb (nth xs i))]
+              (map #(assoc smap symb %1, id %2)
+                   xs
+                   (range)))))
+
+(defn make [form]
+  (->> form abstract (apply model)))
 
 (defn explore [coll]
   {:pre [(coll? coll) (seq coll)]}
