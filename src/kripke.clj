@@ -91,6 +91,17 @@
                    xs
                    (range)))))
 
+(defmacro store [[id v] expr]
+  {:pre [(keyword? id)]}
+  `(choicefn [smap# symb#]
+             [(assoc smap# ~id ~v symb# ~expr)]))
+
+(defmacro load [[v id] expr]
+  {:pre [(keyword? id)]}
+  `(choicefn [smap# symb#]
+             (let [~v (smap# ~id)]
+               [(assoc smap# symb# ~expr)])))
+
 (defn make [form]
   (->> form abstract (apply model)))
 

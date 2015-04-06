@@ -31,12 +31,16 @@
              (make (table :a 1 2 3))))
       (is (= (list [1 'a] [1 'b] [2 'a] [2 'b])
              (make [(alt 1 2) (alt 'a 'b)])
-             (make [(table :a 1 2) (table :b 'a 'b)])))))
-  (testing "explore"
-    (is (= #{{1 2} {3 4} {1 4} {3 2}}
-           (->> [{1 2} {3 4}] explore (apply model) set)))
-    (is (= (list [1 2 3] [1 2 4] [1 2 10] [1 0 3] [1 0 4] [1 0 10])
-           (apply model (explore [[1 2 3] [1 2 4] [1 0 10]])))))
-  (testing "summarize"
-    (is (= [{1 2} {3 4}]
-           (->> [{1 2} {3 4}] summarize (apply model))))))
+             (make [(table :a 1 2) (table :b 'a 'b)]))))
+    (testing "load/store"
+      (is (= (list [1 2] [1 3])
+             (make [(store [:a (alt 2 3)] 1)
+                    (load [a :a] a)]))))
+    (testing "explore"
+      (is (= #{{1 2} {3 4} {1 4} {3 2}}
+             (->> [{1 2} {3 4}] explore (apply model) set)))
+      (is (= (list [1 2 3] [1 2 4] [1 2 10] [1 0 3] [1 0 4] [1 0 10])
+             (apply model (explore [[1 2 3] [1 2 4] [1 0 10]])))))
+    (testing "summarize"
+      (is (= [{1 2} {3 4}]
+             (->> [{1 2} {3 4}] summarize (apply model)))))))
