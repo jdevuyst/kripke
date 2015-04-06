@@ -65,16 +65,14 @@
                      form)
              @!smaps)))))
 
-(defn abstract-more [smap symb]
+(defn abstract-more [symb smap]
   (let [[form smaps] (abstract (smap symb) [smap] vector)]
-    (map #(if-let [[_ v] (find % form)]
-            (assoc (dissoc % form) symb v)
-            %)
-         smaps)))
+    (map (partial assoc smap symb)
+         (model form smaps))))
 
 (defmacro choicefn [[smap-name symb-name] & body]
   `(do ^::choice (fn [~smap-name ~symb-name]
-                   (mapcat (<fn abstract-more ~symb-name)
+                   (mapcat (partial abstract-more ~symb-name)
                            (do ~@body)))))
 
 (defn alt [& disjuncts]
@@ -82,7 +80,7 @@
             (map (partial assoc smap symb)
                  disjuncts)))
 
-(defn table [id & xs]
+(defn tab [id & xs]
   {:pre [(keyword? id)]}
   (choicefn [smap symb]
             (if-let [i (smap id)]
@@ -96,7 +94,7 @@
   `(choicefn [smap# symb#]
              [(assoc smap# ~id ~v symb# ~expr)]))
 
-(defmacro load [[v id] expr]
+(defmacro retr [[v id] expr]
   {:pre [(keyword? id)]}
   `(choicefn [smap# symb#]
              (let [~v (smap# ~id)]
