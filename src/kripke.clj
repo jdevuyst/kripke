@@ -36,13 +36,15 @@
               identity
               y))))
 
-;; Core
+;; Tweakable
 
 (def ^:dynamic *map* map)
 
 (def ^:dynamic *mapcat* mapcat)
 
 (def ^:dynamic *fold* reduce)
+
+;; Core
 
 (defn model [frame smaps]
   (*map* (<fn w/prewalk-replace frame) smaps))
@@ -65,9 +67,15 @@
                      form)
              @!smaps)))))
 
-(defn abstract-more [symb smap]
-  (let [[form smaps] (abstract (smap symb) [smap] vector)]
-    (map (partial assoc smap symb)
+(defn make [form]
+  (apply model (abstract form)))
+
+(defn abstract-more [k smap]
+  {:pre [(or (symbol? k) (keyword? k))
+         (map? smap)]}
+  (let [[form smaps] (abstract (smap k) [smap] vector)]
+    (map #(assoc %1 k %2)
+         smaps
          (model form smaps))))
 
 (defmacro choicefn [[smap-name symb-name] & body]
@@ -89,31 +97,24 @@
                    xs
                    (range)))))
 
-(defmacro store [[id v] expr]
+(defmacro store [[id vexpr] & body]
   {:pre [(keyword? id)]}
   `(choicefn [smap# symb#]
-             [(assoc smap# ~id ~v symb# ~expr)]))
+             (abstract-more ~id
+                            (assoc smap# ~id ~vexpr symb# (do ~@body)))))
 
-(defmacro retr [[v id] expr]
-  {:pre [(keyword? id)]}
+(defmacro retr [[vname id] & body]
+  {:pre [(symbol? vname)
+         (keyword? id)]}
   `(choicefn [smap# symb#]
-             (let [~v (smap# ~id)]
-               [(assoc smap# symb# ~expr)])))
-
-(defn make [form]
-  (->> form abstract (apply model)))
-
-(defn explore [coll]
-  {:pre [(coll? coll) (seq coll)]}
-  (abstract (*fold* (partial diff alt)
-                    coll)))
+             (let [~vname (smap# ~id)]
+               [(assoc smap# symb# (do ~@body))])))
 
 (defn summarize [coll]
   {:pre [(coll? coll) (seq coll)]}
   (let [prototype (*fold* (partial diff (fn [_ _] (gensym 'summarize__)))
                           coll)]
     [prototype
-     (*map* (fn [x]
-              (gather yield {}
-                      (diff #(yield [%1 %2]) prototype x)))
+     (*map* #(gather yield {}
+                     (diff (comp yield vector) prototype %))
             coll)]))
