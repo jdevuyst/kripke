@@ -2,6 +2,20 @@
 
 Kripke a Clojure library for manipulating sequences of similar-enough structures.
 
+## Installation
+
+Add the following dependency to `project.clj`:
+
+![Clojars Project](https://clojars.org/kripke/latest-version.svg)
+
+Next, load the `kripke` namespace:
+
+```clojure
+(require '[kripke :refer :all])
+```
+
+## Basic usage
+
 A typical workflow is as follows:
 
 1. Start with a prototype structure
@@ -99,10 +113,15 @@ If you want more power, you can use `store` and `load` to smuggle data from one 
 Given a collection of structures, `summarize` returns a frame and a sequence of substitution maps that represent the same information.
 
 ```clojure
-(summarize '([1 2 [3 #{4}]] [:a 2 [3 (4)]]))
+(def form '([1 2 [3 #{4}]] [:a 2 [3 (4)]]))
+
+(summarize form)
 ;=> [[summarize__14972 2 [3 summarize__14973]]
 ;    ({summarize__14972 1 summarize__14973 #{4}}
 ;     {summarize__14972 :a summarize__14973 (4)})]
+
+(= form (apply model (summarize form)))
+;=> true
 ```
 
 ## License

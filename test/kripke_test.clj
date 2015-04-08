@@ -153,7 +153,10 @@
     (is (= (make [(alt (store [:a (alt 1 2 3 4)] :even))
                   (alt (retr [a :a] (if (even? a) a (alt))))])
            '([:even 2] [:even 4])))
-    (is (≅ (summarize '([1 2 [3 #{4}]] [:a 2 [3 (4)]]))
-           '[[summarize__14972 2 [3 summarize__14973]]
-             ({summarize__14972 1 summarize__14973 #{4}}
-              {summarize__14972 :a summarize__14973 (4)})]))))
+    (let [form '([1 2 [3 #{4}]] [:a 2 [3 (4)]])]
+      (is (≅ (summarize form))
+          '[[summarize__14972 2 [3 summarize__14973]]
+            ({summarize__14972 1 summarize__14973 #{4}}
+             {summarize__14972 :a summarize__14973 (4)})])
+      (is (= form
+             (apply model (summarize form)))))))
