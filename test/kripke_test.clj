@@ -114,6 +114,8 @@
 
 ;; README tests
 
+(require '[clojure.set :as set])
+
 (defn normalize-symbols [form]
   (let [!i (atom 0)]
     (w/postwalk #(if (symbol? %)
